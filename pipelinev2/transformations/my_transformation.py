@@ -29,15 +29,13 @@ def bronze_consumi():
     )
 
 
-
-
 @dlt.table(
     name="bronze_specifiche",
     comment="Dati grezzi di specifiche tecniche da csv"
 )
 def bronze_specifiche():
     return (
-        spark.readStream
+        spark.read
             .format("csv")
             .option("header", "true")
             .option("inferSchema", "true")
@@ -55,10 +53,8 @@ def bronze_specifiche():
 )
 @dlt.expect_or_drop("id_valido", "id IS NOT NULL")
 @dlt.expect_or_drop("marca valida", "marca IS NOT NULL")
-'''
-Con .filter() — i record scartati spariscono silenziosamente, non sai quanti ne hai persi né perché.
-Con @dlt.expect_or_drop — DLT tiene traccia delle violazioni e le mostra nella UI della pipeline con metriche dedicate: quanti record sono passati, quanti sono stati droppati e per quale regola. È visibile nel grafo della pipeline in tempo reale.
-'''
+# Con .filter() — i record scartati spariscono silenziosamente, non sai quanti ne hai persi né perché.
+# Con @dlt.expect_or_drop — DLT tiene traccia delle violazioni e le mostra nella UI della pipeline con metriche dedicate: quanti record sono passati, quanti sono stati droppati e per quale regola. È visibile nel grafo della pipeline in tempo reale.
 
 def silver_veicoli():
     consumi = dlt.read_stream("bronze_consumi")
@@ -67,12 +63,12 @@ def silver_veicoli():
     return (
         consumi.join(specifiche, on=["id", "marca", "modello"], how="left")
         # nuove colonne case when
-        .withColumn("tipo_di_alimentazione", F.when(F.col("consumo_misto_wltp_l100km").isNuLL() & F.col("consumo_elettrico_kwh100km").isNotNull(), "Elettrico").when(F.col("autonomia_elettrica_km").isNotNull(), "PHEV")
+        .withColumn("tipo_di_alimentazione", F.when(F.col("consumo_misto_wltp_l100km").isNull() & F.col("consumo_elettrico_kwh100km").isNotNull(), "Elettrico").when(F.col("autonomia_elettrica_km").isNotNull(), "PHEV")
                         .when(F.col("motorizzazione").contains("Hybrid"), "Ibrido").otherwise("Termico"))
 
         .withColumn("zero_emissioni", F.when(F.col("emissioni_co2_gkm")== 0, True ).otherwise(False))
         
-        .withColumn("classe_potenza", F.when(F.col("potenza_cv") <= 100, "Lenta").when(F.col("potenza_cv") > 100 & F.col("potenza_cv") <= 200, "Media").otherwise("Veloce"))
+        .withColumn("classe_potenza", F.when(F.col("potenza_cv") <= 100, "Lenta").when((F.col("potenza_cv") > 100) & (F.col("potenza_cv") <= 200), "Media").otherwise("Veloce"))
 
         # colonna timestamp
         .withColumn("ingested_at", F.current_timestamp())
@@ -109,7 +105,7 @@ def gold_per_alimentazione():
     name="gold_per_marca",
     comment="Aggregazioni per marca"
 )
-def gold_per_alimentazione():
+def gold_per_marca():
     return (
         dlt.read("silver_veicoli")
         .groupBy("marca")
@@ -127,10 +123,10 @@ def gold_per_alimentazione():
 #-------------------------------------------------------
 
 @dlt.table(
-    name="gold_per_classe potenza",
+    name="gold_per_classe_potenza",
     comment="Aggregazioni per classe potenza"
 )
-def gold_per_alimentazione():
+def gold_per_classe_potenza():
     return (
         dlt.read("silver_veicoli")
         .groupBy("classe_potenza")
