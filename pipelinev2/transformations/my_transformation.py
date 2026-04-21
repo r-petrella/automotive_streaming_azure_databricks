@@ -6,7 +6,7 @@ STORAGE_ACCOUNT = "storageaccountautomotive"
 CONTAINER = "landing"
 
 SOURCE_RAW = f"abfss://{CONTAINER}@{STORAGE_ACCOUNT}.dfs.core.windows.net/auto/raw"
-SOURCE_SPEC = f"abfss://{CONTAINER}@{STORAGE_ACCOUNT}.dfs.core.windows.net/auto/specifiche/auto_specifiche.csv"
+SOURCE_SPEC = f"abfss://{CONTAINER}@{STORAGE_ACCOUNT}.dfs.core.windows.net/auto/specifiche/auto_specifiche_v2.csv"
 SCHEMA_PATH = f"abfss://{CONTAINER}@{STORAGE_ACCOUNT}.dfs.core.windows.net/auto/_schema_dlt"
 
 # ==============================================================
@@ -23,7 +23,7 @@ def bronze_consumi():
             .format("cloudFiles")
             .option("cloudFiles.format", "json")
             .option("cloudFiles.useNotifications", "false")
-            .option("cloudFiles.includeExistingFiles", "true")
+            .option("cloudFiles.includeExistingFiles", "false")
             .option("cloudFiles.schemaLocation", SCHEMA_PATH)
             .load(SOURCE_RAW)
     )
