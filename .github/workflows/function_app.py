@@ -22,7 +22,6 @@ import azure.functions as func
 import json
 import logging
 import os
-import glob
 from datetime import datetime, timezone
 
 from azure.identity import ClientSecretCredential
@@ -43,7 +42,9 @@ SCHEDULE      = os.environ.get("TIMER_SCHEDULE", "*/30 * * * * *")
 
 
 # Cartella dati — tutti i file auto_consumi_prestazioni*.json vengono caricati automaticamente
-DATA_DIR = os.path.dirname(__file__)
+
+DATASET_FOLDER = os.environ.get("ADLS_DATASET_FOLDER", "auto/dataset")
+
 
 # Chiave usata su ADLS per tracciare l'indice corrente
 INDEX_FILE = f"{FOLDER}/_state/current_index.txt"
@@ -103,34 +104,49 @@ def upload_record(fs_client: DataLakeServiceClient, record: dict, index: int):
 @app.timer_trigger(
     schedule=SCHEDULE,
     arg_name="mytimer",
-    run_on_startup=False,
+    run_on_startup=True,
     use_monitor=False,
 )
 def auto_producer(mytimer: func.TimerRequest) -> None:
     if mytimer.past_due:
         logging.warning("Il timer è in ritardo rispetto allo schedule.")
 
-# Carica automaticamente tutti i file JSON nella cartella
-    data_files = sorted(glob.glob(os.path.join(DATA_DIR, "auto_consumi_prestazioni*.json")))
-    veicoli = []
-    for file in data_files:
-        with open(file, "r", encoding="utf-8") as f:
-            veicoli += json.load(f)["veicoli"]
-    logging.info(f"Dataset caricato: {len(veicoli)} veicoli da {len(data_files)} file")
-
-    total = len(veicoli)
-
     # Connessione ADLS
     fs_client = get_adls_client()
+
+    # Carica dataset direttamente da ADLS
+    dataset_client = fs_client.get_file_system_client(CONTAINER)
+    paths = sorted([p.name for p in dataset_client.get_paths(path=DATASET_FOLDER) if p.name.endswith(".json")])
+
+    veicoli = []
+    for path in paths:
+        file_cl = fs_client.get_file_client(CONTAINER, path)
+        content = file_cl.download_file().readall().decode("utf-8")
+        veicoli += json.loads(content)["veicoli"]
+
+    total = len(veicoli)
+    logging.info(f"Dataset caricato: {total} veicoli da {len(paths)} file")
 
     # Leggi indice corrente
     current_index = read_index(fs_client)
 
     if current_index >= total:
-        logging.info(f"Tutti i {total} record sono già stati inviati. "
-                     "Resetta il file _state/current_index.txt per ricominciare.")
+        logging.info(f"Nessun nuovo record da inviare ({current_index}/{total}).")
         return
 
+    # Invia il record corrente
+    record   = veicoli[current_index]
+    filename = upload_record(fs_client, record, current_index + 1)
+
+    # Aggiorna indice
+    next_index = current_index + 1
+    write_index(fs_client, next_index)
+
+    logging.info(
+        f"[{next_index}/{total}] {record['marca']} {record['modello']} "
+        f"({record['motorizzazione']}) → {filename}"
+    )
+########################################################################################à
     # Invia il record corrente
     record   = veicoli[current_index]
     filename = upload_record(fs_client, record, current_index + 1)
